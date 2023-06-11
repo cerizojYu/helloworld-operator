@@ -17,7 +17,15 @@ limitations under the License.
 package v1alpha1
 
 import (
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+// type CRStatus string
+
+const (
+	ActiveStatus string = "active"
+	FailedStatus string = "failed"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -28,15 +36,24 @@ type HelloworldSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	// Foo is an example field of Helloworld. Edit helloworld_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	// +kubebuilder:validation:Minimum:=1
+	Replicas int32 `json:"replicas"`
+	// +kubebuilder:validation:Optional
+	Ingress networkingv1.IngressSpec `json:"ingress"`
 }
 
 // HelloworldStatus defines the observed state of Helloworld
 type HelloworldStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+	DeployStatus  string `json:"deploy_status"`
+	SerivceStatus string `json:"service_status"`
+	IngressStatus string `json:"ingress_status"`
 }
+
+// +kubebuilder:printcolumn:name="DeployStatus",type=string,JSONPath=`.status.deploy_status`
+// +kubebuilder:printcolumn:name="SerivceStatus",type=string,JSONPath=`.status.service_status`
+// +kubebuilder:printcolumn:name="IngressStatus",type=string,JSONPath=`.status.ingress_status`
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
