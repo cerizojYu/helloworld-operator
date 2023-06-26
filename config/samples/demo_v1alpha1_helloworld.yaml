@@ -9,4 +9,17 @@ metadata:
     app.kubernetes.io/created-by: helloworld-operator
   name: helloworld-sample
 spec:
-  replicas: 1
+  replicas: 2
+  ingress:
+    ingressClassName: nginx
+    rules:
+      - host: ingress.zte.com.cn  
+        http:
+          paths:
+            - path: /helloworld
+              pathType: Prefix
+              backend:
+                service:
+                  name: service-helloworld-sample
+                  port:
+                    number: 80

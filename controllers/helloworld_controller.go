@@ -22,9 +22,12 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -76,7 +79,7 @@ func (r *HelloworldReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			}
 		}
 	} else {
-		// TODO: enter delete logic
+		// cr delete logic
 		err := r.deleteComponents(ctx, cr)
 		if err != nil {
 			l.Error(err, "delete components failed")
@@ -93,6 +96,7 @@ func (r *HelloworldReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return reconcile.Result{}, fmt.Errorf("exit loop with deploy_status: %s; serivce_status: %s; ingress_status: %s", cr.Status.DeployStatus, cr.Status.SerivceStatus, cr.Status.IngressStatus)
 	}
 	// apply deployment
+	// TODO: wait pods running
 	if cr.Status.DeployStatus != demov1alpha1.ActiveStatus {
 		deploy, err := r.constructDeployment(ctx, cr)
 		if err != nil {
@@ -109,13 +113,56 @@ func (r *HelloworldReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 		}
 		return ctrl.Result{}, r.Status().Update(ctx, cr)
+	}
+	// apply service
+	if cr.Status.SerivceStatus != demov1alpha1.ActiveStatus {
+		service, err := r.constructService(ctx, cr)
+		if err != nil {
+			l.Error(err, "construct deployment failed")
+			cr.Status.SerivceStatus = demov1alpha1.FailedStatus
+			return ctrl.Result{}, r.Status().Update(ctx, cr)
+		}
+		if err := r.Create(ctx, service); err != nil {
+			l.Error(err, "create service failed")
+			cr.Status.SerivceStatus = demov1alpha1.FailedStatus
+		} else {
+			l.Info("create service successfully")
+			cr.Status.SerivceStatus = demov1alpha1.ActiveStatus
 
+		}
+		return ctrl.Result{}, r.Status().Update(ctx, cr)
+	}
+	// apply ingress rule
+	if cr.Status.IngressStatus != demov1alpha1.ActiveStatus {
+		service, err := r.constructIngress(ctx, cr)
+		if err != nil {
+			l.Error(err, "construct ingress failed")
+			cr.Status.IngressStatus = demov1alpha1.FailedStatus
+			return ctrl.Result{}, r.Status().Update(ctx, cr)
+		}
+		if err := r.Create(ctx, service); err != nil {
+			l.Error(err, "create ingress failed")
+			cr.Status.IngressStatus = demov1alpha1.FailedStatus
+		} else {
+			l.Info("create ingress successfully")
+			cr.Status.IngressStatus = demov1alpha1.ActiveStatus
+
+		}
+		return ctrl.Result{}, r.Status().Update(ctx, cr)
 	}
 	return ctrl.Result{}, nil
 }
 
 func generateDeploymentName(cr *demov1alpha1.Helloworld) string {
 	return fmt.Sprintf("deployment-%s", cr.Name)
+}
+
+func generateServiceName(cr *demov1alpha1.Helloworld) string {
+	return fmt.Sprintf("service-%s", cr.Name)
+}
+
+func generateIngressName(cr *demov1alpha1.Helloworld) string {
+	return fmt.Sprintf("ingress-%s", cr.Name)
 }
 
 func (r *HelloworldReconciler) constructDeployment(ctx context.Context, cr *demov1alpha1.Helloworld) (*appsv1.Deployment, error) {
@@ -152,7 +199,62 @@ func (r *HelloworldReconciler) constructDeployment(ctx context.Context, cr *demo
 	return deploy, err
 }
 
+func (r *HelloworldReconciler) constructService(ctx context.Context, cr *demov1alpha1.Helloworld) (*v1.Service, error) {
+	svc := &v1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: cr.Namespace,
+			Name:      generateServiceName(cr),
+		},
+		Spec: v1.ServiceSpec{
+			Selector: map[string]string{
+				"app": "helloworld",
+			},
+			Ports: []v1.ServicePort{
+				{
+					Protocol:   v1.ProtocolTCP,
+					Port:       80,
+					TargetPort: intstr.FromInt(8080),
+				},
+			},
+			Type: v1.ServiceTypeClusterIP,
+		},
+	}
+	err := controllerutil.SetControllerReference(cr, svc, r.Scheme)
+	return svc, err
+}
+
+func (r *HelloworldReconciler) constructIngress(ctx context.Context, cr *demov1alpha1.Helloworld) (*networkingv1.Ingress, error) {
+	ingressRule := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: cr.Namespace,
+			Name:      generateIngressName(cr),
+		},
+		Spec: *cr.Spec.Ingress.DeepCopy(),
+	}
+	err := controllerutil.SetControllerReference(cr, ingressRule, r.Scheme)
+	return ingressRule, err
+}
+
 func (r *HelloworldReconciler) deleteComponents(ctx context.Context, cr *demov1alpha1.Helloworld) error {
+	// delete ingress rule
+	ingressRule := &networkingv1.Ingress{}
+	ingressRuleKey := types.NamespacedName{
+		Namespace: cr.Namespace,
+		Name:      generateIngressName(cr),
+	}
+	if err := r.Get(ctx, ingressRuleKey, ingressRule); err == nil {
+		return r.Delete(ctx, ingressRule)
+	}
+	// delete service
+	service := &v1.Service{}
+	serviceKey := types.NamespacedName{
+		Namespace: cr.Namespace,
+		Name:      generateServiceName(cr),
+	}
+	if err := r.Get(ctx, serviceKey, service); err == nil {
+		return r.Delete(ctx, service)
+	}
+	// delete deployment
 	deploy := &appsv1.Deployment{}
 	deployKey := types.NamespacedName{
 		Namespace: cr.Namespace,
@@ -161,6 +263,7 @@ func (r *HelloworldReconciler) deleteComponents(ctx context.Context, cr *demov1a
 	if err := r.Get(ctx, deployKey, deploy); err == nil {
 		return r.Delete(ctx, deploy)
 	}
+
 	return nil
 }
 
